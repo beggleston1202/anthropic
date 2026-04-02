@@ -1,11 +1,11 @@
 """
 Claude AI-powered time entry classifier.
 
-For each RawActivity, sends a structured prompt to claude-sonnet-4-6
-and receives a suggested time entry with matter assignment, description,
-hours, task code, and confidence level.
+For each RawActivity, sends a prompt to claude-sonnet-4-6 using forced tool_choice
+so the response is always structured JSON (no fragile text parsing). The system
+prompt and matter list are marked for prompt caching to reduce API costs ~90%
+across large backfill batches.
 """
-import json
 from datetime import date
 
 import anthropic
@@ -49,12 +49,54 @@ Guidelines:
 - Emails: typical range 0.1–0.3 hours depending on complexity
 - Meetings/hearings: use actual duration
 - Be conservative — if an activity clearly cannot be billed (spam, internal admin, personal), set billable=false
+- Write descriptions in professional past tense: "Reviewed and responded to...", "Attended conference call re..."
+- Never invent facts; base descriptions only on the provided activity content"""
 
-Respond ONLY with valid JSON, no commentary."""
+# Tool definition forces Claude to return structured output — no text parsing needed.
+TIME_ENTRY_TOOL = {
+    "name": "create_time_entry",
+    "description": "Record a billable time entry for the attorney's legal billing system.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "billable": {
+                "type": "boolean",
+                "description": "False if this activity is clearly non-billable (spam, personal, internal admin).",
+            },
+            "matter_id": {
+                "type": ["string", "null"],
+                "description": "Clio matter ID from the active matters list, or null if cannot determine.",
+            },
+            "matter_name": {"type": "string", "description": "Client name + short matter description."},
+            "client_name": {"type": "string"},
+            "hours": {
+                "type": "number",
+                "description": "Billable hours rounded to nearest 0.1 (e.g. 0.3).",
+            },
+            "description": {
+                "type": "string",
+                "description": "Professional billing narrative in past tense, max 200 characters.",
+            },
+            "task_code": {"type": "string", "description": "UTBMS task code, e.g. L120, A106."},
+            "confidence": {
+                "type": "string",
+                "enum": ["high", "medium", "low"],
+                "description": "Confidence in the matter assignment.",
+            },
+            "notes": {
+                "type": "string",
+                "description": "Brief internal note explaining matter assignment or any uncertainty.",
+            },
+        },
+        "required": [
+            "billable", "matter_name", "client_name", "hours",
+            "description", "task_code", "confidence", "notes",
+        ],
+    },
+}
 
-CLASSIFY_TEMPLATE = """Analyze this activity and suggest a time entry.
+ACTIVITY_TEMPLATE = """Analyze this activity and produce a time entry.
 
-ACTIVITY:
 Source: {source}
 Date: {activity_date}
 Subject: {subject}
@@ -63,20 +105,7 @@ Duration: {duration}
 Content: {content}
 
 ACTIVE MATTERS (ID | Matter Number | Client | Description):
-{matters}
-
-Respond with JSON:
-{{
-  "billable": true,
-  "matter_id": "<Clio matter ID from the list above, or null if cannot determine>",
-  "matter_name": "<client + short matter description>",
-  "client_name": "<client name>",
-  "hours": <decimal, e.g. 0.3>,
-  "description": "<professional billing narrative in past tense, specific to this activity>",
-  "task_code": "<UTBMS code>",
-  "confidence": "<high|medium|low>",
-  "notes": "<brief reason for matter assignment or any uncertainty>"
-}}"""
+{matters}"""
 
 
 def classify_activities(
@@ -86,6 +115,9 @@ def classify_activities(
     """
     Run each RawActivity through Claude and return SuggestedEntry objects.
     Non-billable activities are skipped.
+
+    The system prompt and matter list are sent with cache_control so that
+    repeated calls within a batch reuse the cached prefix (reduces cost ~90%).
     """
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     matters_text = format_for_prompt(matters)
@@ -110,34 +142,48 @@ def _classify_one(
         else "unknown"
     )
 
-    prompt = CLASSIFY_TEMPLATE.format(
+    # Build a cacheable prefix block (system prompt + matter list) so that the
+    # large constant context is only processed once per batch by the API.
+    cacheable_prefix = (
+        SYSTEM_PROMPT
+        + "\n\nACTIVE MATTERS (ID | Matter Number | Client | Description):\n"
+        + matters_text
+    )
+
+    user_content = ACTIVITY_TEMPLATE.format(
         source=activity.source.value.replace("_", " ").title(),
         activity_date=activity.activity_date.isoformat(),
         subject=activity.subject,
         participants=activity.participants or "N/A",
         duration=duration_str,
-        content=activity.raw_content[:1000],  # cap to keep tokens reasonable
+        content=activity.raw_content[:1000],
         matters=matters_text,
     )
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=512,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
+        system=[
+            {
+                "type": "text",
+                "text": cacheable_prefix,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        tools=[TIME_ENTRY_TOOL],
+        tool_choice={"type": "tool", "name": "create_time_entry"},
+        messages=[{"role": "user", "content": user_content}],
     )
 
-    raw = message.content[0].text.strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        # Try to extract JSON from the response if wrapped in markdown
-        import re
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            data = json.loads(match.group())
-        else:
-            return None
+    # With tool_choice forced, the response is always a tool_use block.
+    tool_block = next(
+        (b for b in message.content if b.type == "tool_use"),
+        None,
+    )
+    if tool_block is None:
+        return None
+
+    data = tool_block.input
 
     if not data.get("billable", True):
         return None
@@ -147,8 +193,8 @@ def _classify_one(
         source=activity.source,
         activity_date=activity.activity_date,
         matter_id=data.get("matter_id"),
-        matter_name=data.get("matter_name"),
-        client_name=data.get("client_name"),
+        matter_name=data.get("matter_name", ""),
+        client_name=data.get("client_name", ""),
         hours=float(data.get("hours", 0.1)),
         description=data.get("description", ""),
         task_code=data.get("task_code"),
