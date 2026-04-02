@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Ajax Time Tracker{% endblock %}
+{% block content %}
+
+{% if request.query_params.get('syncing') %}
+<div class="alert alert-info alert-dismissible fade show" role="alert">
+  <i class="bi bi-arrow-repeat me-2"></i>Sync started in the background. Refresh in a moment to see new entries.
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% if request.query_params.get('submitted') %}
+<div class="alert alert-success alert-dismissible fade show" role="alert">
+  <i class="bi bi-check-circle me-2"></i>Approved entries submitted to Ajax.
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Dashboard</h1>
+  <div class="d-flex gap-2">
+    <a href="/review?status=pending" class="btn btn-warning">
+      <i class="bi bi-eye me-1"></i>Review Pending ({{ pending_count }})
+    </a>
+    {% if approved_count > 0 %}
+    <form method="post" action="/submit" class="d-inline">
+      <button type="submit" class="btn btn-success"
+        onclick="return confirm('Submit {{ approved_count }} approved entr{{ 'y' if approved_count == 1 else 'ies' }} ({{ approved_hours }} hrs) to Ajax?')">
+        <i class="bi bi-send me-1"></i>Submit to Ajax ({{ approved_count }})
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Stats row -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card stat-card pending h-100">
+      <div class="card-body">
+        <div class="text-muted small">Pending Review</div>
+        <div class="fs-2 fw-bold text-warning">{{ pending_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card approved h-100">
+      <div class="card-body">
+        <div class="text-muted small">Approved ({{ approved_hours }} hrs)</div>
+        <div class="fs-2 fw-bold text-success">{{ approved_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card submitted h-100">
+      <div class="card-body">
+        <div class="text-muted small">Submitted ({{ submitted_hours }} hrs)</div>
+        <div class="fs-2 fw-bold text-primary">{{ submitted_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card stat-card rejected h-100">
+      <div class="card-body">
+        <div class="text-muted small">Rejected</div>
+        <div class="fs-2 fw-bold text-danger">{{ rejected_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent syncs -->
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <strong><i class="bi bi-arrow-repeat me-2"></i>Recent Syncs</strong>
+    <a href="/settings" class="btn btn-sm btn-outline-secondary">Run New Sync</a>
+  </div>
+  <div class="card-body p-0">
+    {% if recent_syncs %}
+    <table class="table table-sm mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Started</th><th>Range</th><th>Activities</th><th>Entries Created</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sync in recent_syncs %}
+        <tr>
+          <td class="text-muted small">{{ sync.started_at.strftime('%b %d %H:%M') }}</td>
+          <td class="small">{{ sync.date_from }} → {{ sync.date_to }}</td>
+          <td>{{ sync.activities_fetched }}</td>
+          <td>{{ sync.entries_created }}</td>
+          <td>
+            {% if sync.error %}
+              <span class="badge bg-danger">Error</span>
+            {% elif sync.finished_at %}
+              <span class="badge bg-success">Done</span>
+            {% else %}
+              <span class="badge bg-warning text-dark">Running</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="p-4 text-center text-muted">
+      No syncs yet. <a href="/settings">Run your first sync</a> to import activities.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Settings — Ajax Time Tracker{% endblock %}
+{% block content %}
+
+<h1 class="h3 mb-4">Settings &amp; Sync</h1>
+
+<div class="row g-4">
+  <!-- Manual sync -->
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header"><strong><i class="bi bi-calendar-range me-2"></i>Run a Sync</strong></div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Pull activities from all configured sources for a date range and generate
+          suggested time entries for your review.
+        </p>
+        <form method="post" action="/sync">
+          <div class="mb-3">
+            <label class="form-label">From</label>
+            <input type="date" name="date_from" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">To</label>
+            <input type="date" name="date_to" class="form-control" required>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-arrow-repeat me-1"></i>Start Sync
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Source status -->
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header"><strong><i class="bi bi-plug me-2"></i>Source Status</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% set sources = [
+              ('Outlook Email', config.outlook_configured()),
+              ('Outlook Calendar', config.outlook_configured()),
+              ('Basecamp', config.basecamp_configured()),
+              ('Dialpad', config.dialpad_configured()),
+              ('Zoom', config.zoom_configured()),
+              ('Clio Manage', config.clio_configured()),
+            ] %}
+            {% for name, ok in sources %}
+            <tr>
+              <td>{{ name }}</td>
+              <td class="text-end">
+                {% if ok %}
+                  <span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Configured</span>
+                {% else %}
+                  <span class="badge bg-secondary"><i class="bi bi-x-lg me-1"></i>Not configured</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer text-muted small">
+        Set credentials in your <code>.env</code> file (see <code>.env.example</code>).
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

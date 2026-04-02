@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Review Entries — Ajax Time Tracker{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">Review Entries</h1>
+  {% if status == 'approved' %}
+  <form method="post" action="/submit">
+    <button type="submit" class="btn btn-success"
+      onclick="return confirm('Submit all {{ total }} approved entries to Ajax?')">
+      <i class="bi bi-send me-1"></i>Submit All to Ajax
+    </button>
+  </form>
+  {% endif %}
+</div>
+
+<!-- Status filter tabs -->
+<ul class="nav nav-tabs mb-3">
+  {% for tab in ['pending', 'approved', 'rejected', 'submitted'] %}
+  <li class="nav-item">
+    <a class="nav-link {% if status == tab %}active{% endif %}" href="/review?status={{ tab }}">
+      {{ tab.title() }}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+
+{% if entries %}
+{% for entry in entries %}
+<div class="card mb-3 {% if entry.confidence == 'low' %}border-danger{% elif entry.confidence == 'medium' %}border-warning{% endif %}">
+  <div class="card-header d-flex justify-content-between align-items-start">
+    <div>
+      <span class="badge bg-secondary source-badge me-1">
+        {{ entry.source.value.replace('_', ' ').title() }}
+      </span>
+      {% if entry.confidence == 'low' %}
+        <span class="badge bg-danger source-badge me-1"><i class="bi bi-exclamation-triangle-fill me-1"></i>Low Confidence</span>
+      {% elif entry.confidence == 'medium' %}
+        <span class="badge bg-warning text-dark source-badge me-1">Medium Confidence</span>
+      {% endif %}
+      <strong class="ms-1">{{ entry.activity_date }}</strong>
+    </div>
+    <div class="text-end">
+      <span class="fw-bold fs-5 text-success">{{ entry.hours }} hrs</span>
+      {% if entry.task_code %}<span class="badge bg-light text-dark ms-2">{{ entry.task_code }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-8">
+        <div class="mb-2">
+          <span class="text-muted small">Client/Matter:</span>
+          <strong>{{ entry.client_name or '—' }}</strong>
+          {% if entry.matter_name %} — {{ entry.matter_name }}{% endif %}
+        </div>
+        <div class="mb-2">
+          <span class="text-muted small">Description:</span><br>
+          {{ entry.description }}
+        </div>
+        {% if entry.ai_notes %}
+        <div class="text-muted small fst-italic">
+          <i class="bi bi-robot me-1"></i>{{ entry.ai_notes }}
+        </div>
+        {% endif %}
+      </div>
+
+      {% if status == 'pending' %}
+      <div class="col-md-4 d-flex flex-column gap-2">
+        <!-- Quick approve -->
+        <form method="post" action="/review/{{ entry.id }}/approve">
+          <button class="btn btn-success btn-sm w-100">
+            <i class="bi bi-check-lg me-1"></i>Approve
+          </button>
+        </form>
+        <!-- Reject -->
+        <form method="post" action="/review/{{ entry.id }}/reject">
+          <button class="btn btn-outline-danger btn-sm w-100">
+            <i class="bi bi-x-lg me-1"></i>Reject
+          </button>
+        </form>
+        <!-- Edit & approve toggle -->
+        <button class="btn btn-outline-secondary btn-sm w-100" type="button"
+          data-bs-toggle="collapse" data-bs-target="#edit-{{ entry.id }}">
+          <i class="bi bi-pencil me-1"></i>Edit & Approve
+        </button>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if status == 'pending' %}
+    <!-- Edit form (collapsed by default) -->
+    <div class="collapse mt-3" id="edit-{{ entry.id }}">
+      <form method="post" action="/review/{{ entry.id }}/edit">
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label small">Matter ID (Clio)</label>
+            <input type="text" name="matter_id" class="form-control form-control-sm"
+              value="{{ entry.matter_id or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Matter Name</label>
+            <input type="text" name="matter_name" class="form-control form-control-sm"
+              value="{{ entry.matter_name or '' }}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Hours</label>
+            <input type="number" name="hours" step="0.1" min="0.1" class="form-control form-control-sm"
+              value="{{ entry.hours }}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Task Code</label>
+            <input type="text" name="task_code" class="form-control form-control-sm"
+              value="{{ entry.task_code or '' }}">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small">Description</label>
+            <textarea name="description" class="form-control form-control-sm"
+              rows="2">{{ entry.description }}</textarea>
+          </div>
+          <div class="col-12">
+            <button type="submit" class="btn btn-success btn-sm">
+              <i class="bi bi-check-lg me-1"></i>Save & Approve
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if status == 'submitted' and entry.ajax_entry_id %}
+    <div class="text-muted small mt-2">
+      <i class="bi bi-check-circle-fill text-success me-1"></i>
+      Ajax Entry ID: {{ entry.ajax_entry_id }}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<nav>
+  <ul class="pagination pagination-sm">
+    {% for p in range(1, total_pages + 1) %}
+    <li class="page-item {% if p == page %}active{% endif %}">
+      <a class="page-link" href="/review?status={{ status }}&page={{ p }}">{{ p }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<div class="text-center text-muted py-5">
+  <i class="bi bi-inbox fs-1"></i>
+  <p class="mt-2">No {{ status }} entries.</p>
+  {% if status == 'pending' %}
+  <a href="/settings" class="btn btn-outline-primary btn-sm">Run a Sync</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
